@@ -1,20 +1,43 @@
 # Redis en Kubernetes: Deployment y ReplicaSet (P2)
 
+## Descripción
+
+Práctica individual realizada en un clúster local de **Kubernetes** con **Minikube y Docker Desktop**. Se desplegó **Redis** para comprobar cómo funcionan los recursos **Deployment** y **ReplicaSet**, cómo se aumenta el número de Pods y qué sucede cuando se elimina uno de ellos.
+
 ## Objetivo
-Demostrar el uso de Deployment y ReplicaSet en un clúster local de Kubernetes mediante dos instancias de Redis, sus pruebas básicas, escalado y recuperación automática de Pods.
 
-## Herramientas
-- Docker Desktop (motor de contenedores)
-- Minikube (clúster Kubernetes local)
-- PowerShell (terminal)
-- Kubernetes CLI: `minikube kubectl --` o `kubectl`
-- Imagen: `redis:7.4-alpine`
+Configurar Redis en Kubernetes y demostrar el funcionamiento de Deployment y ReplicaSet mediante la creación de dos Pods, pruebas básicas de Redis, escalado a tres réplicas y recuperación automática de un Pod.
 
-## Importante
-Este ejercicio es **académico**. Se ejecutan **dos instancias Redis independientes** para comprobar cómo Kubernetes administra el número de Pods. **NO** son réplicas de datos de Redis y no están configuradas para producción. No almacenar información sensible. Para un Redis con persistencia y replicación reales deben configurarse mecanismos adecuados como Redis replication/Redis Cluster y almacenamiento persistente, normalmente con StatefulSet.
+## Herramientas utilizadas
 
-## 1. Preparar el clúster
-Con Docker Desktop abierto:
+- **Docker Desktop:** motor de contenedores.
+- **Minikube:** clúster local de Kubernetes.
+- **PowerShell:** ejecución de los comandos.
+- **Visual Studio Code:** revisión de los archivos YAML.
+- **Redis:** imagen `redis:7.4-alpine`.
+- **Git y GitHub:** publicación del proyecto.
+
+## Archivos del proyecto
+
+```text
+kubernetes-redis-deployment-replicaset/
+├── k8s/
+│   ├── namespace.yaml
+│   └── redis-deployment.yaml
+├── evidencias/
+│   └── [capturas de la práctica]
+└── README.md
+```
+
+El archivo `namespace.yaml` crea el espacio de trabajo `tarea-p2`. El archivo `redis-deployment.yaml` define el Deployment `redis-demo` con **dos réplicas** de Redis y comprobaciones de salud.
+
+> **Nota:** el ReplicaSet fue creado automáticamente por Kubernetes a partir del Deployment; no se configuró un ReplicaSet independiente.
+
+## Procedimiento realizado
+
+### 1. Iniciar y comprobar el clúster
+
+Con Docker Desktop en ejecución, se utilizaron los siguientes comandos:
 
 ```powershell
 minikube start --driver=docker
@@ -22,107 +45,93 @@ minikube status
 minikube kubectl -- get nodes
 ```
 
-En PowerShell se puede definir una función temporal para usar los comandos del resto de la guía:
+El clúster inició correctamente y el nodo `minikube` apareció en estado **Ready**.
+
+### 2. Crear el Namespace y el Deployment
 
 ```powershell
-function kubectl { minikube kubectl -- @args }
+minikube kubectl -- apply -f k8s/namespace.yaml
+minikube kubectl -- apply -f k8s/redis-deployment.yaml
+minikube kubectl -- rollout status deployment/redis-demo -n tarea-p2 --timeout=180s
+minikube kubectl -- get deployments,replicasets,pods -n tarea-p2 -o wide
 ```
 
-Si ya tienes `kubectl` instalado y configurado para el contexto de Minikube, la función no es necesaria. Comprueba el contexto:
+Kubernetes creó el **Deployment**, el **ReplicaSet** y **dos Pods**, ambos en estado `Running` y `1/1`.
+
+### 3. Comprobar Redis
+
+Se seleccionó uno de los Pods y se ejecutaron tres operaciones básicas:
 
 ```powershell
-kubectl config current-context
+$pod = minikube kubectl -- get pods -n tarea-p2 -l app=redis-demo -o jsonpath='{.items[0].metadata.name}'
+minikube kubectl -- exec -n tarea-p2 $pod -- redis-cli PING
+minikube kubectl -- exec -n tarea-p2 $pod -- redis-cli SET materia "DevOps-P2"
+minikube kubectl -- exec -n tarea-p2 $pod -- redis-cli GET materia
 ```
 
-## 2. Aplicar YAML
-Desde la raíz del repositorio:
+Los resultados fueron **`PONG`**, **`OK`** y **`DevOps-P2`**. Así se comprobó que Redis respondía y permitía guardar y consultar un dato.
+
+### 4. Aumentar las réplicas y eliminar un Pod
 
 ```powershell
-kubectl apply -f k8s/namespace.yaml
-kubectl apply -f k8s/redis-deployment.yaml
-kubectl rollout status deployment/redis-demo -n tarea-p2 --timeout=180s
-kubectl get deployments,replicasets,pods -n tarea-p2 -o wide
+minikube kubectl -- scale deployment redis-demo --replicas=3 -n tarea-p2
+minikube kubectl -- get deployments,replicasets,pods -n tarea-p2
+$podEliminar = minikube kubectl -- get pods -n tarea-p2 -l app=redis-demo -o jsonpath='{.items[0].metadata.name}'
+minikube kubectl -- delete pod $podEliminar -n tarea-p2
+minikube kubectl -- get pods -n tarea-p2 -w
 ```
 
-Debes observar el `Deployment`, el `ReplicaSet` y dos Pods en estado `Running` y listos `1/1`.
+El Deployment pasó de **2 a 3 réplicas**. Al eliminar uno de los Pods, Kubernetes creó otro automáticamente y volvió a mantener **3 Pods**.
 
-## 3. Probar Redis
-Selecciona una instancia Redis concreta para que las operaciones se ejecuten en el mismo Pod:
+### 5. Volver al estado inicial
 
 ```powershell
-$pod = kubectl get pods -n tarea-p2 -l app=redis-demo -o jsonpath='{.items[0].metadata.name}'
-kubectl exec -n tarea-p2 $pod -- redis-cli PING
-kubectl exec -n tarea-p2 $pod -- redis-cli SET materia "DevOps-P2"
-kubectl exec -n tarea-p2 $pod -- redis-cli GET materia
+minikube kubectl -- scale deployment redis-demo --replicas=2 -n tarea-p2
+minikube kubectl -- get deployments,replicasets,pods -n tarea-p2
 ```
 
-Resultados esperados: `PONG`, `OK` y `DevOps-P2`. No hay necesidad de instalar Redis en Windows.
+Al terminar la práctica, el Deployment volvió a tener **2/2 réplicas disponibles**.
 
-## 4. Observar ReplicaSet y escalar
+## Evidencias
 
-```powershell
-kubectl describe deployment redis-demo -n tarea-p2
-kubectl get replicaset -n tarea-p2
-kubectl scale deployment redis-demo --replicas=3 -n tarea-p2
-kubectl get pods -n tarea-p2 -o wide
-```
+Las capturas muestran los resultados reales obtenidos en PowerShell. Los archivos se encuentran en la carpeta [`evidencias/`](evidencias/).
 
-Deben aparecer tres Pods. El escalado prueba que `Deployment` y `ReplicaSet` coordinan la cantidad deseada.
+| Evidencia | Descripción |
+|---|---|
+| [01. Inicio de Minikube](evidencias/01_inicio_minikube.png) | Inicio del clúster y comprobación de sus componentes. |
+| [02. Nodo Ready](evidencias/02_nodo_ready.png) | Kubernetes reconoce el nodo local y muestra su estado `Ready`. |
+| [03. Namespace](evidencias/03_namespace.png) | Creación del espacio de trabajo `tarea-p2`. |
+| [04. Deployment](evidencias/04_deployment.png) | Creación del Deployment `redis-demo`. |
+| [05. Estado del despliegue](evidencias/05_rollout.png) | Confirmación de que el despliegue finalizó correctamente. |
+| [06. Deployment, ReplicaSet y Pods](evidencias/06_replicaset_pods.png) | Dos Pods de Redis disponibles y en ejecución. |
+| [07. Pruebas de Redis](evidencias/07_pruebas_redis.png) | Resultados de `PING`, `SET` y `GET`. |
+| [08. Escalado y recuperación](evidencias/08_escalado_recuperacion.png) | Escalado a tres réplicas y reemplazo automático de un Pod eliminado. |
+| [09. Regreso a dos réplicas](evidencias/09_retorno_dos_replicas.png) | Reducción del Deployment a dos Pods. |
+| [10. Estado final](evidencias/10_estado_final.png) | Verificación final de las dos réplicas disponibles. |
 
-## 5. Comprobar autorrecuperación
+### Evidencia principal: Deployment y ReplicaSet
 
-```powershell
-$podAntes = kubectl get pods -n tarea-p2 -l app=redis-demo -o jsonpath='{.items[0].metadata.name}'
-Write-Output "Pod que se va a eliminar: $podAntes"
-kubectl delete pod $podAntes -n tarea-p2
-kubectl get pods -n tarea-p2 -w
-```
+![Deployment, ReplicaSet y dos Pods en ejecución](evidencias/06_replicaset_pods.png)
 
-Presiona `Ctrl+C` después de observar que Kubernetes creó otro Pod. Verifica:
+### Evidencia principal: escalado y recuperación
 
-```powershell
-kubectl get pods -n tarea-p2
-```
+![Escalado a tres Pods y recuperación automática](evidencias/08_escalado_recuperacion.png)
 
-El objetivo es volver a 3 Pods. El nuevo Pod no conserva necesariamente los datos del eliminado: la prueba es de **recuperación del proceso**, no de persistencia de datos.
+## ¿Para qué sirve Redis?
 
-## 6. Dejar el estado como el YAML del repositorio
+Redis puede utilizarse para **caché**, almacenamiento temporal de **sesiones**, **contadores** y consulta rápida de determinados datos. En esta práctica se probó su funcionamiento básico con `PING`, `SET` y `GET`.
 
-```powershell
-kubectl scale deployment redis-demo --replicas=2 -n tarea-p2
-kubectl get deployments,replicasets,pods -n tarea-p2
-```
+## Alcance de la práctica
 
-## 7. Capturas sugeridas
-Guardar imágenes reales en `evidencias/`:
-1. `01-minikube-nodos.png` — Clúster activo (`minikube status` y `kubectl get nodes`).
-2. `02-yaml-deployment.png` — Archivo YAML abierto en VS Code.
-3. `03-deployment-replicaset-pods.png` — Recursos creados y 2 Pods.
-4. `04-redis-ping-set-get.png` — `PING`, `SET` y `GET` exitosos.
-5. `05-escalado-tres-pods.png` — 3 Pods después de escalar.
-6. `06-autorecuperacion.png` — Eliminación de uno y reemplazo automático.
-7. `07-repositorio-publico.png` — Repositorio GitHub en modo público.
+Las réplicas creadas son **Pods independientes con Redis**. El ejercicio demuestra la administración y recuperación de Pods en Kubernetes, **no** la replicación de datos de Redis. No se configuró almacenamiento persistente ni una infraestructura para producción.
 
-## 8. Publicar en GitHub
-Crear un repositorio **público** vacío llamado `kubernetes-redis-deployment-replicaset` (sin README inicial), luego desde este proyecto:
+## Conclusión
 
-```powershell
-git init
-git add .
-git commit -m "Práctica Kubernetes: Deployment y ReplicaSet con Redis"
-git branch -M main
-git remote add origin https://github.com/TU_USUARIO/kubernetes-redis-deployment-replicaset.git
-git push -u origin main
-```
+La práctica permitió comprobar que **Deployment** declara cuántas copias de una aplicación deben ejecutarse y que **ReplicaSet** ayuda a mantener esa cantidad. También se verificó el funcionamiento de Redis y la creación automática de un Pod nuevo cuando se eliminó uno de los existentes.
 
-Reemplaza `TU_USUARIO` por tu nombre real de usuario de GitHub. Si tu entorno te pide autenticación, usa el método configurado para tu cuenta. Comprueba después que el repositorio es accesible públicamente.
+## Referencias
 
-## 9. Informe y exposición
-Usa la plantilla `INFORME_PLANTILLA.md` como estructura de informe. No inventes resultados; completa el informe con tus propias capturas y salidas obtenidas al ejecutar los comandos.
-
-## Fuentes
-- https://kubernetes.io/docs/concepts/workloads/controllers/deployment/
-- https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/
-- https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/
-- https://minikube.sigs.k8s.io/docs/start/
-- https://redis.io/docs/latest/operate/oss_and_stack/management/scaling/
+- [Kubernetes: Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/)
+- [Kubernetes: ReplicaSet](https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/)
+- [Minikube: documentación oficial](https://minikube.sigs.k8s.io/docs/start/)
+- [Redis: documentación oficial](https://redis.io/docs/latest/)
